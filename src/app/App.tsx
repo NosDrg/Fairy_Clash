@@ -2,8 +2,19 @@ import { formatTime, getCardIcon } from './utils';
 import BattleEntity from './components/BattleEntity';
 import BattleEffects from './components/BattleEffects';
 import { useState, useEffect, useRef } from 'react';
-import { Crown, Zap, Sword, Loader2 } from 'lucide-react';
+import { Crown, Zap, Sword, Loader2, Trophy, LogOut } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface UserProfile {
+  username:       string;
+  displayName:    string;
+  cups:           number;
+  level:          number;
+  stats:          { wins: number; losses: number };
+  decks:          string[][];
+  cardCollection: string[];
+}
 
 const SERVER_URL = 'http://localhost:5000';
 
@@ -51,8 +62,180 @@ const ALL_CARDS: CardDef[] = [
   { name: "Glinda's Light", cost: 3 }
 ];
 
-// State of the game
+// ─── Auth helpers ────────────────────────────────────────────────────────────
+async function apiAuth(path: string, body: object) {
+  const res = await fetch(`${SERVER_URL}/api/auth${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+async function apiPut(path: string, token: string, body: object) {
+  const res = await fetch(`${SERVER_URL}/api/auth${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+async function apiPost(path: string, token: string, body: object) {
+  const res = await fetch(`${SERVER_URL}/api/auth${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+// ─── Particles ───────────────────────────────────────────────────────────────
+function Particles({ colors }: { colors: string[] }) {
+  const particles = Array.from({ length: 28 }, (_, i) => ({
+    id: i,
+    left:  `${Math.random() * 100}%`,
+    size:  Math.random() * 5 + 2,
+    delay: `${Math.random() * 6}s`,
+    dur:   `${Math.random() * 8 + 6}s`,
+    color: colors[i % colors.length],
+    shape: Math.random() > 0.5 ? '50%' : '2px',
+    drift: `${(Math.random() - 0.5) * 60}px`,
+  }));
+
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+      {particles.map(p => (
+        <div
+          key={p.id}
+          style={{
+            position:     'absolute',
+            bottom:       '-10px',
+            left:          p.left,
+            width:        `${p.size}px`,
+            height:       `${p.size}px`,
+            borderRadius:  p.shape,
+            background:    p.color,
+            boxShadow:    `0 0 ${p.size * 2}px ${p.color}`,
+            opacity:       0,
+            animation:    `particleFloat ${p.dur} ${p.delay} infinite ease-in`,
+            '--drift':     p.drift,
+          } as React.CSSProperties}
+        />
+      ))}
+      <style>{`
+        @keyframes particleFloat {
+          0%   { transform: translateY(0)   translateX(0)               scale(0.5); opacity: 0;   }
+          10%  { opacity: 0.9; }
+          80%  { opacity: 0.6; }
+          100% { transform: translateY(-110vh) translateX(var(--drift)) scale(1.2); opacity: 0; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Auth Screen ──────────────────────────────────────────────────────────────
+function AuthScreen({ onLogin }: { onLogin: (token: string, profile: UserProfile) => void }) {
+  const [tab, setTab] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    setError('');
+    setLoading(true);
+    const body = tab === 'register'
+      ? { username, displayName, password }
+      : { username, password };
+    const data = await apiAuth(`/${tab}`, body);
+    setLoading(false);
+    if (data.error) { setError(data.error); return; }
+    localStorage.setItem('fc_token', data.token);
+    onLogin(data.token, data.profile);
+  };
+
+  return (
+    <div className="relative min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-900 via-purple-950 to-slate-900 overflow-hidden">
+      {/* Auth particles: cyan + purple + pink */}
+      <Particles colors={['#06b6d4', '#a855f7', '#ec4899', '#818cf8', '#67e8f9']} />
+      <div className="w-full max-w-sm p-8 bg-slate-900/80 border-2 border-cyan-500/30 rounded-2xl shadow-2xl backdrop-blur-md flex flex-col gap-6">
+        <h1 className="text-3xl font-['Cinzel_Decorative'] text-cyan-100 tracking-widest text-center">FAIRYTALE CLASH</h1>
+
+        {/* Tab */}
+        <div className="flex rounded-xl overflow-hidden border border-slate-700">
+          {(['login', 'register'] as const).map(t => (
+            <button key={t} onClick={() => { setTab(t); setError(''); }}
+              className={`flex-1 py-2 text-sm font-bold uppercase transition-all ${
+                tab === t ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              }`}>
+              {t === 'login' ? 'Login' : 'Register'}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <input id="auth-username" type="text" placeholder="Username (dùng để đăng nhập)" value={username}
+            onChange={e => setUsername(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors" />
+
+          {tab === 'register' && (
+            <input id="auth-displayname" type="text" placeholder="Tên hiển thị" value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submit()}
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-fuchsia-500 transition-colors" />
+          )}
+
+          <input id="auth-password" type="password" placeholder="Password" value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()}
+            className="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors" />
+        </div>
+
+        {error && <p className="text-rose-400 text-sm text-center">{error}</p>}
+
+        <button id="auth-submit" onClick={submit} disabled={loading}
+          className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-700 rounded-xl text-white font-bold text-lg hover:scale-105 transition-all shadow-lg disabled:opacity-50">
+          {loading ? '...' : tab === 'login' ? 'Login' : 'Create Account'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  // Auth
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('fc_token'));
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  // Load profile on mount if token exists
+  useEffect(() => {
+    const saved = localStorage.getItem('fc_token');
+    if (!saved) return;
+    fetch(`${SERVER_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${saved}` } })
+      .then(r => r.json())
+      .then(data => {
+        if (data.profile) setUserProfile(data.profile);
+        else { localStorage.removeItem('fc_token'); setToken(null); }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleLogin = (tok: string, profile: UserProfile) => {
+    setToken(tok);
+    setUserProfile(profile);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('fc_token');
+    setToken(null);
+    setUserProfile(null);
+  };
+
   const [matchStatus, setMatchStatus] = useState<'idle' | 'searching' | 'loading' | 'playing'>('idle');
   const [gameData, setGameData] = useState<GameState | null>(null);
   const [allyElixir, setAllyElixir] = useState(0);
@@ -63,16 +246,32 @@ export default function App() {
   const [hoverPos, setHoverPos] = useState<{ x: number, y: number } | null>(null);
 
   const [isDeckOpen, setIsDeckOpen] = useState(false);
-  const [activeDeckIndex, setActiveDeckIndex] = useState(0);
-  const [decks, setDecks] = useState<CardDef[][]>([
-    ALL_CARDS.slice(0, 10),
-    ALL_CARDS.slice(1, 11),
-    [...ALL_CARDS.slice(0, 5), ...ALL_CARDS.slice(6, 11)]
-  ]);
+  const activeDeckIndex = 0; // Hardcoded to single deck
+
+  // Build CardDef decks from profile.decks (string[]) or fallback
+  const profileDecksToDefs = (profileDecks: string[][]): CardDef[][] =>
+    profileDecks.map(deck => deck.map(name => ALL_CARDS.find(c => c.name === name) || { name, cost: 3 }));
+
+  const [decks, setDecks] = useState<CardDef[][]>(() => {
+    const saved = userProfile?.decks;
+    if (saved && saved.length > 0) return profileDecksToDefs(saved);
+    return [[...ALL_CARDS.slice(0, 10)]];
+  });
+
+  // Sync decks when profile loads
+  useEffect(() => {
+    if (userProfile?.decks) setDecks(profileDecksToDefs(userProfile.decks));
+  }, [userProfile]);
 
   const [hand, setHand] = useState<CardDef[]>([]);
   const [nextCard, setNextCard] = useState<CardDef>(ALL_CARDS[0]);
   const socketRef = useRef<Socket | null>(null);
+  const decksRef = useRef<CardDef[][]>(decks);
+
+  // Sync ref with state
+  useEffect(() => {
+    decksRef.current = decks;
+  }, [decks]);
 
   // Create towers for both players
   const initialTowers = [
@@ -94,8 +293,17 @@ export default function App() {
     socketRef.current.on('gameUpdate', (data: GameState) => {
       setMatchStatus(prev => {
         if (prev === 'loading' || prev === 'searching') {
-          setHand([decks[activeDeckIndex][0], decks[activeDeckIndex][1], decks[activeDeckIndex][2], decks[activeDeckIndex][3]]);
-          setNextCard(decks[activeDeckIndex][4]);
+          const currentDecks = decksRef.current;
+          const myDeck = [...currentDecks[activeDeckIndex]];
+          
+          // Shuffle deck to get random initial hand
+          for (let i = myDeck.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [myDeck[i], myDeck[j]] = [myDeck[j], myDeck[i]];
+          }
+
+          setHand([myDeck[0], myDeck[1], myDeck[2], myDeck[3]]);
+          setNextCard(myDeck[4]);
           return 'playing';
         }
         return prev;
@@ -106,18 +314,27 @@ export default function App() {
       if (me) setAllyElixir(me.fairyDust);
     });
 
-    socketRef.current.on('gameOver', (data: any) => {
+    socketRef.current.on('gameOver', async (data: any) => {
       const isWinner = data.winner === 'bottom';
+      let result: 'win' | 'loss' | 'draw' = 'draw';
       if (data.winner === 'Draw!') {
         alert("Game Over! Trận đấu Hòa!");
       } else if (isWinner) {
+        result = 'win';
         alert("Game Over! Bạn đã THẮNG! (+30 Cúp)");
         setAllyTrophies(t => t + 30);
         setEnemyTrophies(t => t - 30);
       } else {
-        alert("Game Over! Bạn đã THUA! (-30 Cúp)");
-        setAllyTrophies(t => t - 30);
-        setEnemyTrophies(t => t + 30);
+        result = 'loss';
+        alert("Game Over! Bạn đã THUA! (-20 Cúp)");
+        setAllyTrophies(t => Math.max(0, t - 20));
+        setEnemyTrophies(t => t + 20);
+      }
+      // Persist result to server
+      const savedToken = localStorage.getItem('fc_token');
+      if (savedToken) {
+        const res = await apiPost('/game-result', savedToken, { result });
+        if (res.profile) setUserProfile(res.profile);
       }
       setMatchStatus('idle');
       setGameData(null);
@@ -135,7 +352,10 @@ export default function App() {
       return;
     }
     setMatchStatus('searching');
-    socketRef.current?.emit('joinQueue', { userId: 'user_' + Math.random(), deck: [] });
+    socketRef.current?.emit('joinQueue', {
+      userId: userProfile?.username || 'user_' + Math.random(),
+      deck: decks[activeDeckIndex].map(c => c.name)
+    });
   };
 
   const cancelMatchmaking = () => {
@@ -151,8 +371,22 @@ export default function App() {
       return;
     }
 
+    const towers = gameData?.towers || initialTowers;
+    const p2LeftGone = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
+    const p2RightGone = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
+
     const isSpell = selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light";
-    if (!isSpell && (y < 55 || y > 95)) return;
+    
+    // Default valid zone: bottom half (y: 55-95)
+    let isSpawnValid = !isSpell ? (y >= 55 && y <= 95) : true;
+
+    // Expanded zone if enemy towers are gone
+    if (!isSpell && !isSpawnValid) {
+      if (p2LeftGone && x < 50 && y >= 25 && y < 55) isSpawnValid = true;
+      if (p2RightGone && x >= 50 && y >= 25 && y < 55) isSpawnValid = true;
+    }
+
+    if (!isSpawnValid) return;
 
     socketRef.current?.emit('spawnUnit', { cardName: selectedCard, x, y });
 
@@ -184,12 +418,36 @@ export default function App() {
     setHoverPos(null);
   };
 
+  const saveDeckToServer = async (newDecks: CardDef[][]) => {
+    const savedToken = localStorage.getItem('fc_token');
+    if (!savedToken) return;
+    const deckNames = newDecks.map(d => d.map(c => c.name));
+    const res = await apiPut('/decks', savedToken, { decks: deckNames });
+    if (res.profile) setUserProfile(res.profile);
+  };
+
   const addCardToDeck = (card: CardDef) => {
+    const spellNames = ['Poison Apple', 'Miner Bomb', 'Oz Tornado', "Glinda's Light"];
+    const isSpell = spellNames.includes(card.name);
+
     setDecks(prev => {
-      const newDecks = [...prev];
-      if (newDecks[activeDeckIndex].length < 10) {
-        newDecks[activeDeckIndex] = [...newDecks[activeDeckIndex], card];
+      const currentDeck = prev[activeDeckIndex];
+      
+      // Limit to 10 cards total
+      if (currentDeck.length >= 10) return prev;
+
+      // Limit to 3 spells
+      if (isSpell) {
+        const spellCount = currentDeck.filter(c => spellNames.includes(c.name)).length;
+        if (spellCount >= 3) {
+          alert("Mỗi bộ bài chỉ được phép chứa tối đa 3 thẻ Phép thuật (Spell)!");
+          return prev;
+        }
       }
+
+      const newDecks = [...prev];
+      newDecks[activeDeckIndex] = [...currentDeck, card];
+      saveDeckToServer(newDecks);
       return newDecks;
     });
   };
@@ -198,6 +456,7 @@ export default function App() {
     setDecks(prev => {
       const newDecks = [...prev];
       newDecks[activeDeckIndex] = newDecks[activeDeckIndex].filter(c => c.name !== card.name);
+      saveDeckToServer(newDecks);
       return newDecks;
     });
   };
@@ -237,64 +496,158 @@ export default function App() {
     }
   };
 
+  // Show auth screen if not logged in
+  if (!token || !userProfile) return <AuthScreen onLogin={handleLogin} />;
+
   return (
     <div className="relative w-full h-screen overflow-hidden bg-gradient-to-b from-slate-900 via-purple-900 to-slate-900">
-      {/* Overlay Screens */}
+      {/* ── HOME / LOBBY SCREEN ── */}
       {matchStatus !== 'playing' && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md">
-          <div className="flex flex-col items-center gap-6 p-8 bg-slate-900/80 border-2 border-cyan-500/30 rounded-2xl shadow-2xl">
-            <h1 className="text-4xl font-['Cinzel_Decorative'] text-cyan-100 tracking-widest">FAIRYTALE CLASH</h1>
-            {matchStatus === 'idle' && (
-              <button
-                onClick={() => setIsDeckOpen(true)}
-                className="absolute top-4 right-4 px-6 py-2 bg-gradient-to-r from-purple-600 to-fuchsia-700 rounded-full text-white font-bold hover:scale-105 transition-all shadow-lg"
-              >
-                DECK
-              </button>
-            )}
-            <button
-              onClick={startMatchmaking}
-              className="group relative flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-cyan-600 to-blue-700 rounded-full text-white font-bold text-xl hover:scale-105 transition-all shadow-[0_0_20px_rgba(6,182,212,0.5)]"
-            >
-              <Sword className="w-6 h-6 group-hover:rotate-12 transition-transform" />
-              <span>BATTLE</span>
+        <div className="absolute inset-0 z-50 flex flex-col overflow-hidden" id="home-screen"
+          style={{ background: 'linear-gradient(160deg, #0a0a1a 0%, #1a0a2e 40%, #0d1a3a 100%)' }}>
+          {/* Home particles: gold + violet + cyan */}
+          <Particles colors={['#facc15', '#a78bfa', '#34d399', '#f9a8d4', '#7c3aed']} />
+
+          {/* Animated background orbs */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div className="absolute w-96 h-96 rounded-full opacity-20 animate-pulse"
+              style={{ background: 'radial-gradient(circle, #7c3aed, transparent)', top: '-10%', left: '-10%', animationDuration: '4s' }} />
+            <div className="absolute w-80 h-80 rounded-full opacity-15 animate-pulse"
+              style={{ background: 'radial-gradient(circle, #0ea5e9, transparent)', bottom: '-5%', right: '-5%', animationDuration: '6s', animationDelay: '2s' }} />
+            <div className="absolute w-64 h-64 rounded-full opacity-10 animate-pulse"
+              style={{ background: 'radial-gradient(circle, #ec4899, transparent)', top: '40%', right: '10%', animationDuration: '5s', animationDelay: '1s' }} />
+          </div>
+
+          {/* Top bar: Logout */}
+          <div className="relative z-10 flex justify-end px-6 pt-5">
+            <button onClick={handleLogout} title="Logout"
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-rose-500/20 border border-white/10 hover:border-rose-500/50 rounded-full text-slate-400 hover:text-rose-400 text-sm font-medium transition-all">
+              <LogOut className="w-4 h-4" />
+              <span>Logout</span>
             </button>
+          </div>
+
+          {/* Center content */}
+          <div className="relative z-10 flex-1 flex flex-col items-center justify-center gap-8 px-6">
+
+            {/* Logo */}
+            <div className="flex flex-col items-center gap-2">
+              <div className="text-6xl mb-1 animate-bounce" style={{ animationDuration: '3s' }}>⚔️</div>
+              <h1 className="text-5xl md:text-6xl font-black tracking-widest text-transparent bg-clip-text"
+                style={{ fontFamily: "'Cinzel Decorative', cursive", backgroundImage: 'linear-gradient(135deg, #67e8f9, #a78bfa, #f9a8d4)' }}>
+                FAIRY CLASH
+              </h1>
+              <p className="text-slate-400 text-sm tracking-[0.3em] uppercase">Real-time Card Battle</p>
+            </div>
+
+            {/* Profile card */}
+            <div className="w-full max-w-sm bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-5 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center text-xl font-black text-white shadow-lg">
+                    {userProfile.displayName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-white font-bold text-lg leading-none">{userProfile.displayName}</p>
+                    <p className="text-slate-500 text-xs mt-0.5">@{userProfile.username}</p>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end">
+                  <div className="flex items-center gap-1.5 text-yellow-400">
+                    <Trophy className="w-5 h-5" />
+                    <span className="font-black text-2xl">{userProfile.cups}</span>
+                  </div>
+                  <span className="text-yellow-600 text-xs font-medium">Cups</span>
+                </div>
+              </div>
+
+              {/* Stats row */}
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                <div className="flex flex-col items-center">
+                  <span className="text-green-400 font-black text-xl">{userProfile.stats.wins}</span>
+                  <span className="text-slate-500 text-xs">Wins</span>
+                </div>
+                <div className="flex flex-col items-center border-x border-white/10">
+                  <span className="text-rose-400 font-black text-xl">{userProfile.stats.losses}</span>
+                  <span className="text-slate-500 text-xs">Losses</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <span className="text-cyan-400 font-black text-xl">
+                    {userProfile.stats.wins + userProfile.stats.losses > 0
+                      ? Math.round((userProfile.stats.wins / (userProfile.stats.wins + userProfile.stats.losses)) * 100)
+                      : 0}%
+                  </span>
+                  <span className="text-slate-500 text-xs">Win Rate</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            {matchStatus === 'idle' && (
+              <div className="flex flex-col items-center gap-3 w-full max-w-sm">
+                {/* Battle button */}
+                <button onClick={startMatchmaking}
+                  className="group w-full py-4 rounded-2xl font-black text-xl text-white relative overflow-hidden shadow-2xl transition-all hover:scale-105 active:scale-95"
+                  style={{ background: 'linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6)' }}>
+                  <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors rounded-2xl" />
+                  <div className="relative flex items-center justify-center gap-3">
+                    <Sword className="w-6 h-6 group-hover:rotate-12 transition-transform" />
+                    <span style={{ fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.15em' }}>BATTLE</span>
+                  </div>
+                </button>
+
+                {/* Deck button */}
+                <button onClick={() => setIsDeckOpen(true)}
+                  className="group w-full py-3 rounded-2xl font-bold text-base text-slate-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-violet-500/50 transition-all">
+                  <span style={{ fontFamily: "'Rajdhani', sans-serif", letterSpacing: '0.1em' }}>🃏 MANAGE DECKS</span>
+                </button>
+              </div>
+            )}
+
+            {/* Searching state */}
             {matchStatus === 'searching' && (
-              <div className="flex flex-col items-center gap-2 mt-4">
-                <Loader2 className="w-6 h-6 text-cyan-400 animate-spin" />
-                <p className="text-cyan-200 text-sm">MATCHMAKING...</p>
+              <div className="flex flex-col items-center gap-4 w-full max-w-sm">
+                <div className="w-full py-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center gap-3">
+                  <Loader2 className="w-5 h-5 text-cyan-400 animate-spin" />
+                  <span className="text-cyan-300 font-bold tracking-widest text-sm">FINDING OPPONENT...</span>
+                </div>
+                <button onClick={cancelMatchmaking}
+                  className="text-sm text-slate-500 hover:text-rose-400 underline transition-colors">
+                  Cancel
+                </button>
               </div>
             )}
+
+            {/* Loading state */}
             {matchStatus === 'loading' && (
-              <div className="flex flex-col items-center gap-2 mt-4">
-                <Loader2 className="w-8 h-8 text-fuchsia-400 animate-spin" />
-                <p className="text-fuchsia-200 text-lg font-bold animate-pulse">LOADING MAP AND CARDS...</p>
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="w-10 h-10 text-fuchsia-400 animate-spin" />
+                <p className="text-fuchsia-300 font-bold tracking-widest text-sm animate-pulse">LOADING ARENA...</p>
               </div>
             )}
+          </div>
+
+          {/* Bottom version tag */}
+          <div className="relative z-10 text-center pb-4">
+            <span className="text-slate-700 text-xs">Fairy Clash v0.1 · CNPM Project</span>
           </div>
         </div>
       )}
 
+
       {/* Deck Builder Overlay */}
       {isDeckOpen && matchStatus === 'idle' && (
-        <div className="absolute inset-0 z-50 flex flex-col bg-slate-950 text-white p-8 overflow-y-auto">
+        <div className="absolute inset-0 z-50 flex flex-col bg-slate-950 text-white overflow-y-auto" style={{ position: 'absolute' }}>
+          {/* Deck particles: green + teal + emerald */}
+          <Particles colors={['#10b981', '#06b6d4', '#6ee7b7', '#a3e635', '#34d399']} />
+          <div className="relative z-10 flex flex-col flex-1 p-8">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-4xl font-['Cinzel_Decorative'] text-cyan-300 drop-shadow-lg">YOUR DECK</h2>
             <button onClick={() => setIsDeckOpen(false)} className="px-6 py-2 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold shadow-lg transition-all">CLOSE</button>
           </div>
 
-          {/* Deck Tabs */}
-          <div className="flex gap-4 mb-6">
-            {[0, 1, 2].map(i => (
-              <button
-                key={i}
-                onClick={() => setActiveDeckIndex(i)}
-                className={`px-8 py-3 rounded-xl font-bold border-2 transition-all shadow-lg ${activeDeckIndex === i ? 'bg-cyan-600 border-cyan-300 text-white scale-105' : 'bg-slate-800 border-slate-600 text-slate-300 hover:border-slate-400'}`}
-              >
-                DECK {i + 1}
-              </button>
-            ))}
-          </div>
+          {/* Deck Tabs - Removed temporarily */}
+          <div className="mb-6 invisible h-0"></div>
 
           <div className="mb-3 flex justify-between items-end">
             <h3 className="text-2xl text-yellow-400 font-bold drop-shadow-md">Equipped ({decks[activeDeckIndex].length}/10)</h3>
@@ -329,6 +682,7 @@ export default function App() {
               </div>
             ))}
           </div>
+          </div>
         </div>
       )}
 
@@ -344,7 +698,10 @@ export default function App() {
             <div className="text-purple-200 font-['Cinzel_Decorative'] tracking-wider">ENEMY</div>
             <div className="text-xs text-white/60 font-mono">{matchStatus === 'playing' ? formatTime(timeLeft) : '--:--'}</div>
           </div>
-          <div className="w-16"></div>
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-cyan-900/60 rounded-full border border-cyan-400/30">
+            <Trophy className="w-4 h-4 text-yellow-400" />
+            <span className="font-['Rajdhani'] font-semibold text-cyan-300">{userProfile.cups}</span>
+          </div>
         </div>
 
         {/* Battlefield Area */}
@@ -381,7 +738,7 @@ export default function App() {
                 onMouseLeave={handleMouseLeave}
               />
               {/* Towers */}
-              {(gameData?.towers || initialTowers).map((tower: any) => (
+              {(gameData?.towers || initialTowers).filter((t: any) => t.hp > 0).map((tower: any) => (
                 <div
                   key={tower.id}
                   className="absolute flex flex-col items-center transition-all duration-100"
@@ -397,9 +754,9 @@ export default function App() {
                     rounded-lg border-2 shadow-xl flex items-center justify-center`}>
                     <div className="text-2xl">{tower.type === 'king' ? '👑' : '👸'}</div>
                   </div>
-                  <div className={`absolute -bottom-3 left-1/2 -translate-x-1/2 ${tower.type === 'king' ? 'w-20' : 'w-14'} h-1.5 bg-black/50 rounded-full overflow-hidden`}>
+                  <div className={`absolute -bottom-3 left-1/2 -translate-x-1/2 ${tower.type === 'king' ? 'w-20' : 'w-14'} h-1.5 bg-black/50 rounded-full overflow-hidden border border-black/20`}>
                     <div className={`h-full ${tower.side === 'bottom' ? 'bg-cyan-400' : 'bg-rose-400'} transition-all duration-300`}
-                      style={{ width: `${(tower.hp / tower.maxHp) * 100}%` }}></div>
+                      style={{ width: `${Math.max(0, Math.min(100, (tower.hp / tower.maxHp) * 100))}%` }}></div>
                   </div>
                 </div>
               ))}
@@ -411,6 +768,27 @@ export default function App() {
 
               {/* Attacks Visuals */}
               <BattleEffects attacks={gameData?.attacks} />
+
+              {/* Troop Phantom Preview (Giả lập vị trí Troop) */}
+              {selectedCard && hoverPos && !['Poison Apple', 'Miner Bomb', 'Oz Tornado', "Glinda's Light"].includes(selectedCard) && (
+                <div
+                  className={`absolute flex flex-col items-center pointer-events-none transition-all duration-75 ${hoverPos.y >= 55 && hoverPos.y <= 95 ? 'opacity-60 scale-100' : 'opacity-20 scale-90 grayscale'}`}
+                  style={{
+                    left: `${hoverPos.x}%`,
+                    top: `${hoverPos.y}%`,
+                    transform: 'translate(-50%, -100%) translateZ(30px)',
+                    zIndex: 999
+                  }}
+                >
+                  <div className="relative w-12 h-16 rounded-lg border-2 border-cyan-400 bg-gradient-to-b from-cyan-600/40 to-blue-800/40 shadow-xl flex flex-col items-center justify-center p-1 backdrop-blur-sm">
+                    <div className="text-[8px] text-cyan-100 font-bold uppercase truncate w-full text-center mb-1">{selectedCard}</div>
+                    <div className="text-2xl drop-shadow-lg">{getCardIcon(selectedCard)}</div>
+                    <div className="absolute -bottom-2 w-10 h-1 bg-cyan-400/30 rounded-full"></div>
+                  </div>
+                  {/* Shadow indicator */}
+                  <div className="w-8 h-2 bg-black/30 rounded-full blur-[2px] mt-1"></div>
+                </div>
+              )}
 
 
               {/* Spell AoE Preview (Dành riêng cho Phép thuật) */}
@@ -430,9 +808,54 @@ export default function App() {
                 />
               )}
 
-              {/* Spawn Area Highlight */}
-              {selectedCard && (
-                <div className={`absolute ${(selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light") ? 'inset-4 border-purple-500/40 bg-purple-500/10' : 'bottom-[5%] left-[5%] right-[5%] h-[40%] border-cyan-400/40 bg-cyan-500/10'} border-2 border-dashed rounded-3xl animate-pulse pointer-events-none`}></div>
+              {/* Spawn Area Highlight (Vùng triệu hồi thống nhất) */}
+              {selectedCard && !(selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light") && (
+                <div className="absolute inset-0 pointer-events-none z-[500] animate-pulse">
+                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <defs>
+                      <filter id="glow">
+                        <feGaussianBlur stdDeviation="1" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                      </filter>
+                    </defs>
+                    {(() => {
+                      const towers = gameData?.towers || initialTowers;
+                      const L = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
+                      const R = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
+                      
+                      let d = "";
+                      if (L && R) {
+                        // Full top rectangle merged with bottom
+                        d = "M 5 25 L 95 25 L 95 95 L 5 95 Z";
+                      } else if (L) {
+                        // L-Shape
+                        d = "M 5 25 L 50 25 L 50 55 L 95 55 L 95 95 L 5 95 Z";
+                      } else if (R) {
+                        // Reverse L-Shape
+                        d = "M 5 55 L 50 55 L 50 25 L 95 25 L 95 95 L 5 95 Z";
+                      } else {
+                        // Standard bottom rectangle
+                        d = "M 5 55 L 95 55 L 95 95 L 5 95 Z";
+                      }
+                      
+                      return (
+                        <path 
+                          d={d} 
+                          fill="rgba(6, 182, 212, 0.1)" 
+                          stroke="rgba(34, 211, 238, 0.5)" 
+                          strokeWidth="0.5" 
+                          strokeDasharray="2,1"
+                          filter="url(#glow)"
+                        />
+                      );
+                    })()}
+                  </svg>
+                </div>
+              )}
+
+              {/* Full Map Highlight for Spells */}
+              {selectedCard && (selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light") && (
+                <div className="absolute inset-4 border-2 border-dashed border-purple-500/40 bg-purple-500/10 rounded-3xl animate-pulse pointer-events-none z-[500]" />
               )}
             </div>
           </div>
@@ -497,6 +920,11 @@ export default function App() {
       </div>
 
       {/* Custom Animations */}
+      {/* Battle particles: red + orange + amber */}
+      {matchStatus === 'playing' && (
+        <Particles colors={['#f87171', '#fb923c', '#fbbf24', '#ef4444', '#f59e0b']} />
+      )}
+
       <style>{`
         @keyframes float {
           0%, 100% { transform: translateY(0px); }
