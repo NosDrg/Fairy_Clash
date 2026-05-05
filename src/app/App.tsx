@@ -7,12 +7,12 @@ import { io, Socket } from 'socket.io-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface UserProfile {
-  username:       string;
-  displayName:    string;
-  cups:           number;
-  level:          number;
-  stats:          { wins: number; losses: number };
-  decks:          string[][];
+  username: string;
+  displayName: string;
+  cups: number;
+  level: number;
+  stats: { wins: number; losses: number };
+  decks: string[][];
   cardCollection: string[];
 }
 
@@ -33,6 +33,7 @@ interface GameState {
   entities: GameEntity[];
   towers: any[];
   players: any[];
+  activeSpells: any[];
   attacks?: any[];
 }
 
@@ -61,6 +62,8 @@ const ALL_CARDS: CardDef[] = [
   { name: 'Wicked Witch', cost: 5 },
   { name: "Glinda's Light", cost: 3 }
 ];
+
+const SPELL_NAMES = ['Poison Apple', 'Miner Bomb', 'Oz Tornado', "Glinda's Light"];
 
 // ─── Auth helpers ────────────────────────────────────────────────────────────
 async function apiAuth(path: string, body: object) {
@@ -94,10 +97,10 @@ async function apiPost(path: string, token: string, body: object) {
 function Particles({ colors }: { colors: string[] }) {
   const particles = Array.from({ length: 28 }, (_, i) => ({
     id: i,
-    left:  `${Math.random() * 100}%`,
-    size:  Math.random() * 5 + 2,
+    left: `${Math.random() * 100}%`,
+    size: Math.random() * 5 + 2,
     delay: `${Math.random() * 6}s`,
-    dur:   `${Math.random() * 8 + 6}s`,
+    dur: `${Math.random() * 8 + 6}s`,
     color: colors[i % colors.length],
     shape: Math.random() > 0.5 ? '50%' : '2px',
     drift: `${(Math.random() - 0.5) * 60}px`,
@@ -109,17 +112,17 @@ function Particles({ colors }: { colors: string[] }) {
         <div
           key={p.id}
           style={{
-            position:     'absolute',
-            bottom:       '-10px',
-            left:          p.left,
-            width:        `${p.size}px`,
-            height:       `${p.size}px`,
-            borderRadius:  p.shape,
-            background:    p.color,
-            boxShadow:    `0 0 ${p.size * 2}px ${p.color}`,
-            opacity:       0,
-            animation:    `particleFloat ${p.dur} ${p.delay} infinite ease-in`,
-            '--drift':     p.drift,
+            position: 'absolute',
+            bottom: '-10px',
+            left: p.left,
+            width: `${p.size}px`,
+            height: `${p.size}px`,
+            borderRadius: p.shape,
+            background: p.color,
+            boxShadow: `0 0 ${p.size * 2}px ${p.color}`,
+            opacity: 0,
+            animation: `particleFloat ${p.dur} ${p.delay} infinite ease-in`,
+            '--drift': p.drift,
           } as React.CSSProperties}
         />
       ))}
@@ -168,9 +171,8 @@ function AuthScreen({ onLogin }: { onLogin: (token: string, profile: UserProfile
         <div className="flex rounded-xl overflow-hidden border border-slate-700">
           {(['login', 'register'] as const).map(t => (
             <button key={t} onClick={() => { setTab(t); setError(''); }}
-              className={`flex-1 py-2 text-sm font-bold uppercase transition-all ${
-                tab === t ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-              }`}>
+              className={`flex-1 py-2 text-sm font-bold uppercase transition-all ${tab === t ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                }`}>
               {t === 'login' ? 'Login' : 'Register'}
             </button>
           ))}
@@ -222,7 +224,7 @@ export default function App() {
         if (data.profile) setUserProfile(data.profile);
         else { localStorage.removeItem('fc_token'); setToken(null); }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const handleLogin = (tok: string, profile: UserProfile) => {
@@ -295,7 +297,7 @@ export default function App() {
         if (prev === 'loading' || prev === 'searching') {
           const currentDecks = decksRef.current;
           const myDeck = [...currentDecks[activeDeckIndex]];
-          
+
           // Shuffle deck to get random initial hand
           for (let i = myDeck.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
@@ -375,16 +377,20 @@ export default function App() {
     const p2LeftGone = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
     const p2RightGone = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
 
-    const isSpell = selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light";
-    
-    // Default valid zone: bottom half (y: 55-95)
-    let isSpawnValid = !isSpell ? (y >= 55 && y <= 95) : true;
+    const isSpell = SPELL_NAMES.includes(selectedCard);
 
-    // Expanded zone if enemy towers are gone
-    if (!isSpell && !isSpawnValid) {
-      if (p2LeftGone && x < 50 && y >= 25 && y < 55) isSpawnValid = true;
-      if (p2RightGone && x >= 50 && y >= 25 && y < 55) isSpawnValid = true;
-    }
+    const checkSpawnValid = (tx: number, ty: number, spell: boolean) => {
+      if (spell) return true;
+      if (ty >= 55 && ty <= 100) return true;
+      const towers = gameData?.towers || initialTowers;
+      const p2LeftGone = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
+      const p2RightGone = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
+      if (p2LeftGone && tx < 50 && ty >= 25 && ty < 55) return true;
+      if (p2RightGone && tx >= 50 && ty >= 25 && ty < 55) return true;
+      return false;
+    };
+
+    const isSpawnValid = checkSpawnValid(x, y, isSpell);
 
     if (!isSpawnValid) return;
 
@@ -427,18 +433,17 @@ export default function App() {
   };
 
   const addCardToDeck = (card: CardDef) => {
-    const spellNames = ['Poison Apple', 'Miner Bomb', 'Oz Tornado', "Glinda's Light"];
-    const isSpell = spellNames.includes(card.name);
+    const isSpell = SPELL_NAMES.includes(card.name);
 
     setDecks(prev => {
       const currentDeck = prev[activeDeckIndex];
-      
+
       // Limit to 10 cards total
       if (currentDeck.length >= 10) return prev;
 
       // Limit to 3 spells
       if (isSpell) {
-        const spellCount = currentDeck.filter(c => spellNames.includes(c.name)).length;
+        const spellCount = currentDeck.filter(c => SPELL_NAMES.includes(c.name)).length;
         if (spellCount >= 3) {
           alert("Mỗi bộ bài chỉ được phép chứa tối đa 3 thẻ Phép thuật (Spell)!");
           return prev;
@@ -641,47 +646,47 @@ export default function App() {
           {/* Deck particles: green + teal + emerald */}
           <Particles colors={['#10b981', '#06b6d4', '#6ee7b7', '#a3e635', '#34d399']} />
           <div className="relative z-10 flex flex-col flex-1 p-8">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-4xl font-['Cinzel_Decorative'] text-cyan-300 drop-shadow-lg">YOUR DECK</h2>
-            <button onClick={() => setIsDeckOpen(false)} className="px-6 py-2 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold shadow-lg transition-all">CLOSE</button>
-          </div>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-4xl font-['Cinzel_Decorative'] text-cyan-300 drop-shadow-lg">YOUR DECK</h2>
+              <button onClick={() => setIsDeckOpen(false)} className="px-6 py-2 bg-rose-600 hover:bg-rose-500 rounded-xl font-bold shadow-lg transition-all">CLOSE</button>
+            </div>
 
-          {/* Deck Tabs - Removed temporarily */}
-          <div className="mb-6 invisible h-0"></div>
+            {/* Deck Tabs - Removed temporarily */}
+            <div className="mb-6 invisible h-0"></div>
 
-          <div className="mb-3 flex justify-between items-end">
-            <h3 className="text-2xl text-yellow-400 font-bold drop-shadow-md">Equipped ({decks[activeDeckIndex].length}/10)</h3>
-            <p className="text-sm text-rose-300">Click to unequip</p>
-          </div>
+            <div className="mb-3 flex justify-between items-end">
+              <h3 className="text-2xl text-yellow-400 font-bold drop-shadow-md">Equipped ({decks[activeDeckIndex].length}/10)</h3>
+              <p className="text-sm text-rose-300">Click to unequip</p>
+            </div>
 
-          {/* Current Deck Grid */}
-          <div className="grid grid-cols-5 md:grid-cols-10 gap-4 bg-slate-900/80 p-6 rounded-2xl border-2 border-slate-700 min-h-[180px] shadow-inner">
-            {decks[activeDeckIndex].map(card => (
-              <div key={card.name} onClick={() => removeCardFromDeck(card)} className="cursor-pointer relative w-full aspect-[2/3] rounded-xl border-2 border-slate-500 bg-gradient-to-b from-slate-700 to-slate-900 flex flex-col items-center justify-between p-2 shadow-xl hover:border-rose-400 hover:scale-105 transition-all group">
-                <div className="absolute inset-0 bg-rose-500/0 group-hover:bg-rose-500/20 rounded-xl transition-all"></div>
-                <div className="absolute -top-3 -left-3 bg-gradient-to-br from-fuchsia-500 to-purple-700 rounded-full w-8 h-8 flex items-center justify-center text-white text-xs font-bold shadow-lg border-2 border-slate-900 z-10">{card.cost}</div>
-                <div className="text-4xl mt-3 drop-shadow-md z-10">{getCardIcon(card.name)}</div>
-                <div className="text-[10px] text-white font-bold text-center leading-tight drop-shadow-md z-10">{card.name}</div>
-              </div>
-            ))}
-          </div>
+            {/* Current Deck Grid */}
+            <div className="grid grid-cols-5 md:grid-cols-10 gap-4 bg-slate-900/80 p-6 rounded-2xl border-2 border-slate-700 min-h-[180px] shadow-inner">
+              {decks[activeDeckIndex].map(card => (
+                <div key={card.name} onClick={() => removeCardFromDeck(card)} className="cursor-pointer relative w-full aspect-[2/3] rounded-xl border-2 border-slate-500 bg-gradient-to-b from-slate-700 to-slate-900 flex flex-col items-center justify-between p-2 shadow-xl hover:border-rose-400 hover:scale-105 transition-all group">
+                  <div className="absolute inset-0 bg-rose-500/0 group-hover:bg-rose-500/20 rounded-xl transition-all"></div>
+                  <div className="absolute -top-3 -left-3 bg-gradient-to-br from-fuchsia-500 to-purple-700 rounded-full w-8 h-8 flex items-center justify-center text-white text-xs font-bold shadow-lg border-2 border-slate-900 z-10">{card.cost}</div>
+                  <div className="text-4xl mt-3 drop-shadow-md z-10">{getCardIcon(card.name)}</div>
+                  <div className="text-[10px] text-white font-bold text-center leading-tight drop-shadow-md z-10">{card.name}</div>
+                </div>
+              ))}
+            </div>
 
-          <div className="mt-10 mb-3 flex justify-between items-end">
-            <h3 className="text-2xl text-cyan-400 font-bold drop-shadow-md">Collection</h3>
-            <p className="text-sm text-green-300">Click to equip</p>
-          </div>
+            <div className="mt-10 mb-3 flex justify-between items-end">
+              <h3 className="text-2xl text-cyan-400 font-bold drop-shadow-md">Collection</h3>
+              <p className="text-sm text-green-300">Click to equip</p>
+            </div>
 
-          {/* Available Cards */}
-          <div className="grid grid-cols-5 md:grid-cols-10 gap-4 bg-slate-900/80 p-6 rounded-2xl border-2 border-slate-700 min-h-[180px] shadow-inner">
-            {ALL_CARDS.filter(c => !decks[activeDeckIndex].find(dc => dc.name === c.name)).map(card => (
-              <div key={card.name} onClick={() => addCardToDeck(card)} className="cursor-pointer relative w-full aspect-[2/3] rounded-xl border-2 border-slate-700 bg-gradient-to-b from-slate-800 to-slate-950 flex flex-col items-center justify-between p-2 shadow-lg hover:border-green-400 hover:scale-105 transition-all group opacity-80 hover:opacity-100">
-                <div className="absolute inset-0 bg-green-500/0 group-hover:bg-green-500/10 rounded-xl transition-all"></div>
-                <div className="absolute -top-3 -left-3 bg-gradient-to-br from-slate-600 to-slate-800 group-hover:from-fuchsia-500 group-hover:to-purple-700 rounded-full w-8 h-8 flex items-center justify-center text-white text-xs font-bold shadow-lg border-2 border-slate-900 z-10 transition-all">{card.cost}</div>
-                <div className="text-4xl mt-3 drop-shadow-md grayscale group-hover:grayscale-0 transition-all z-10">{getCardIcon(card.name)}</div>
-                <div className="text-[10px] text-slate-300 group-hover:text-white font-bold text-center leading-tight drop-shadow-md z-10">{card.name}</div>
-              </div>
-            ))}
-          </div>
+            {/* Available Cards */}
+            <div className="grid grid-cols-5 md:grid-cols-10 gap-4 bg-slate-900/80 p-6 rounded-2xl border-2 border-slate-700 min-h-[180px] shadow-inner">
+              {ALL_CARDS.filter(c => !decks[activeDeckIndex].find(dc => dc.name === c.name)).map(card => (
+                <div key={card.name} onClick={() => addCardToDeck(card)} className="cursor-pointer relative w-full aspect-[2/3] rounded-xl border-2 border-slate-700 bg-gradient-to-b from-slate-800 to-slate-950 flex flex-col items-center justify-between p-2 shadow-lg hover:border-green-400 hover:scale-105 transition-all group opacity-80 hover:opacity-100">
+                  <div className="absolute inset-0 bg-green-500/0 group-hover:bg-green-500/10 rounded-xl transition-all"></div>
+                  <div className="absolute -top-3 -left-3 bg-gradient-to-br from-slate-600 to-slate-800 group-hover:from-fuchsia-500 group-hover:to-purple-700 rounded-full w-8 h-8 flex items-center justify-center text-white text-xs font-bold shadow-lg border-2 border-slate-900 z-10 transition-all">{card.cost}</div>
+                  <div className="text-4xl mt-3 drop-shadow-md grayscale group-hover:grayscale-0 transition-all z-10">{getCardIcon(card.name)}</div>
+                  <div className="text-[10px] text-slate-300 group-hover:text-white font-bold text-center leading-tight drop-shadow-md z-10">{card.name}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -720,19 +725,68 @@ export default function App() {
                 {/* Bridges */}
                 <div className="absolute top-[45%] left-[20%] w-16 h-[10%] bg-gradient-to-r from-amber-900 via-amber-800 to-amber-900 border-x-4 border-amber-950 shadow-lg"></div>
                 <div className="absolute top-[45%] right-[20%] w-16 h-[10%] bg-gradient-to-r from-amber-900 via-amber-800 to-amber-900 border-x-4 border-amber-950 shadow-lg"></div>
+
+                {/* Spawn Area Highlight */}
+                {selectedCard && !SPELL_NAMES.includes(selectedCard) && (
+                  <div className="absolute inset-0 pointer-events-none z-[5]">
+                    <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                      <defs>
+                        <filter id="area-glow">
+                          <feGaussianBlur stdDeviation="1.5" result="blur" />
+                          <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                        </filter>
+                        <linearGradient id="area-grad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="rgba(34, 211, 238, 0.25)" />
+                          <stop offset="50%" stopColor="rgba(34, 211, 238, 0.1)" />
+                          <stop offset="100%" stopColor="rgba(34, 211, 238, 0.25)" />
+                        </linearGradient>
+                      </defs>
+                      {(() => {
+                        const towers = gameData?.towers || initialTowers;
+                        const L = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
+                        const R = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
+
+                        let d = "";
+                        if (L && R) {
+                          d = "M 0 25 L 100 25 L 100 100 L 0 100 Z";
+                        } else if (L) {
+                          d = "M 0 25 L 50 25 L 50 55 L 100 55 L 100 100 L 0 100 Z";
+                        } else if (R) {
+                          d = "M 0 55 L 50 55 L 50 25 L 100 25 L 100 100 L 0 100 Z";
+                        } else {
+                          d = "M 0 55 L 100 55 L 100 100 L 0 100 Z";
+                        }
+
+                        return (
+                          <path
+                            d={d}
+                            fill="url(#area-grad)"
+                            stroke="rgba(34, 211, 238, 0.8)"
+                            strokeWidth="0.8"
+                            strokeDasharray="2,2"
+                            filter="url(#area-glow)"
+                            className="animate-pulse"
+                          />
+                        );
+                      })()}
+                    </svg>
+                  </div>
+                )}
               </div>
 
               {/* Click Overlay inside 3D space */}
               <div
                 className="absolute inset-0 z-[1000] cursor-crosshair"
                 onClick={(e) => {
-                  const x = (e.nativeEvent.offsetX / e.currentTarget.offsetWidth) * 100;
-                  const y = (e.nativeEvent.offsetY / e.currentTarget.offsetHeight) * 100;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = ((e.clientX - rect.left) / rect.width) * 100;
+                  const y = ((e.clientY - rect.top) / rect.height) * 100;
                   handleBattlefieldClick(e, x, y);
                 }}
                 onMouseMove={(e) => {
-                  const x = (e.nativeEvent.offsetX / e.currentTarget.offsetWidth) * 100;
-                  const y = (e.nativeEvent.offsetY / e.currentTarget.offsetHeight) * 100;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = ((e.clientX - rect.left) / rect.width) * 100;
+                  const y = ((e.clientY - rect.top) / rect.height) * 100;
                   handleMouseMove(e, x, y);
                 }}
                 onMouseLeave={handleMouseLeave}
@@ -769,89 +823,80 @@ export default function App() {
               {/* Attacks Visuals */}
               <BattleEffects attacks={gameData?.attacks} />
 
-              {/* Troop Phantom Preview (Giả lập vị trí Troop) */}
-              {selectedCard && hoverPos && !['Poison Apple', 'Miner Bomb', 'Oz Tornado', "Glinda's Light"].includes(selectedCard) && (
+              {/* Active Persistent Spells Visuals */}
+              {gameData?.activeSpells?.map((spell: any) => (
                 <div
-                  className={`absolute flex flex-col items-center pointer-events-none transition-all duration-75 ${hoverPos.y >= 55 && hoverPos.y <= 95 ? 'opacity-60 scale-100' : 'opacity-20 scale-90 grayscale'}`}
+                  key={spell.id}
+                  className="absolute rounded-full pointer-events-none z-[400]"
                   style={{
-                    left: `${hoverPos.x}%`,
-                    top: `${hoverPos.y}%`,
-                    transform: 'translate(-50%, -100%) translateZ(30px)',
-                    zIndex: 999
+                    left: `${spell.x}%`,
+                    top: `${spell.y}%`,
+                    transform: 'translate(-50%, -50%) translateZ(1px)',
+                    width: `${spell.radius * 2}%`,
+                    height: `${spell.radius * 2}%`,
+                    background: spell.name === 'Poison Apple' ? 'radial-gradient(circle, rgba(34, 197, 94, 0.4) 0%, rgba(20, 83, 45, 0.1) 70%, transparent 100%)' : 'rgba(255, 255, 255, 0.1)',
+                    border: spell.name === 'Poison Apple' ? '2px solid rgba(74, 222, 128, 0.3)' : 'none',
+                    boxShadow: spell.name === 'Poison Apple' ? '0 0 20px rgba(34, 197, 94, 0.2)' : 'none',
+                    animation: 'pulse 2s infinite ease-in-out'
                   }}
                 >
-                  <div className="relative w-12 h-16 rounded-lg border-2 border-cyan-400 bg-gradient-to-b from-cyan-600/40 to-blue-800/40 shadow-xl flex flex-col items-center justify-center p-1 backdrop-blur-sm">
-                    <div className="text-[8px] text-cyan-100 font-bold uppercase truncate w-full text-center mb-1">{selectedCard}</div>
-                    <div className="text-2xl drop-shadow-lg">{getCardIcon(selectedCard)}</div>
-                    <div className="absolute -bottom-2 w-10 h-1 bg-cyan-400/30 rounded-full"></div>
-                  </div>
-                  {/* Shadow indicator */}
-                  <div className="w-8 h-2 bg-black/30 rounded-full blur-[2px] mt-1"></div>
+                  {spell.name === 'Poison Apple' && (
+                    <div className="absolute inset-0 flex items-center justify-center opacity-40 text-xl">
+                      🤢
+                    </div>
+                  )}
                 </div>
-              )}
+              ))}
 
+              {/* Troop Phantom Preview (Giả lập vị trí Troop) */}
+              {selectedCard && hoverPos && !SPELL_NAMES.includes(selectedCard) && (() => {
+                const towers = gameData?.towers || initialTowers;
+                const p2LeftGone = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
+                const p2RightGone = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
+
+                const isValid = (hoverPos.y >= 55 && hoverPos.y <= 95) ||
+                  (p2LeftGone && hoverPos.x < 50 && hoverPos.y >= 25 && hoverPos.y < 55) ||
+                  (p2RightGone && hoverPos.x >= 50 && hoverPos.y >= 25 && hoverPos.y < 55);
+
+                return (
+                  <div
+                    className={`absolute flex flex-col items-center pointer-events-none transition-all duration-75 ${isValid ? 'opacity-60 scale-100' : 'opacity-20 scale-90 grayscale'}`}
+                    style={{
+                      left: `${hoverPos.x}%`,
+                      top: `${hoverPos.y}%`,
+                      transform: 'translate(-50%, -100%) translateZ(20px)',
+                      zIndex: 999
+                    }}
+                  >
+                    <div className="relative w-12 h-16 rounded-lg border-2 border-cyan-400 bg-gradient-to-b from-cyan-600/40 to-blue-800/40 shadow-xl flex flex-col items-center justify-center p-1 backdrop-blur-sm">
+                      <div className="text-[8px] text-cyan-100 font-bold uppercase truncate w-full text-center mb-1">{selectedCard}</div>
+                      <div className="text-2xl drop-shadow-lg">{getCardIcon(selectedCard)}</div>
+                      <div className="absolute -bottom-2 w-10 h-1 bg-cyan-400/30 rounded-full"></div>
+                    </div>
+                    {/* Shadow indicator */}
+                    <div className="w-8 h-2 bg-black/30 rounded-full blur-[2px] mt-1"></div>
+                  </div>
+                );
+              })()}
 
               {/* Spell AoE Preview (Dành riêng cho Phép thuật) */}
-              {selectedCard && hoverPos && ['Poison Apple', 'Miner Bomb', 'Oz Tornado', "Glinda's Light"].includes(selectedCard) && (
+              {selectedCard && hoverPos && SPELL_NAMES.includes(selectedCard) && (
                 <div
                   className="absolute rounded-full border-2 border-fuchsia-400 bg-fuchsia-500/20 transition-none pointer-events-none z-[998]"
                   style={{
                     left: `${hoverPos.x}%`,
                     top: `${hoverPos.y}%`,
                     // Dùng translate(-50%, -50%) để tâm của vòng tròn trùng chính xác với con trỏ chuột
-                    transform: 'translate(-50%, -50%) translateZ(10px)',
-                    // Oz Tornado có radius 20 (đường kính 40%), các phép khác radius 15 (đường kính 30%)
-                    width: selectedCard === 'Oz Tornado' ? '40%' : '30%',
-                    height: selectedCard === 'Oz Tornado' ? '40%' : '30%',
+                    transform: 'translate(-50%, -50%) translateZ(1px)',
+                    // Oz Tornado có radius 20 (đường kính 40%), Poison Apple radius 12 (đường kính 24%), các phép khác radius 15 (đường kính 30%)
+                    width: selectedCard === 'Oz Tornado' ? '40%' : (selectedCard === 'Poison Apple' ? '24%' : '30%'),
+                    height: selectedCard === 'Oz Tornado' ? '40%' : (selectedCard === 'Poison Apple' ? '24%' : '30%'),
                     boxShadow: '0 0 20px rgba(217, 70, 239, 0.3) inset'
                   }}
                 />
               )}
 
-              {/* Spawn Area Highlight (Vùng triệu hồi thống nhất) */}
-              {selectedCard && !(selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light") && (
-                <div className="absolute inset-0 pointer-events-none z-[500] animate-pulse">
-                  <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                    <defs>
-                      <filter id="glow">
-                        <feGaussianBlur stdDeviation="1" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                      </filter>
-                    </defs>
-                    {(() => {
-                      const towers = gameData?.towers || initialTowers;
-                      const L = !towers.find((t: any) => t.id === 'p2_left' && t.hp > 0);
-                      const R = !towers.find((t: any) => t.id === 'p2_right' && t.hp > 0);
-                      
-                      let d = "";
-                      if (L && R) {
-                        // Full top rectangle merged with bottom
-                        d = "M 5 25 L 95 25 L 95 95 L 5 95 Z";
-                      } else if (L) {
-                        // L-Shape
-                        d = "M 5 25 L 50 25 L 50 55 L 95 55 L 95 95 L 5 95 Z";
-                      } else if (R) {
-                        // Reverse L-Shape
-                        d = "M 5 55 L 50 55 L 50 25 L 95 25 L 95 95 L 5 95 Z";
-                      } else {
-                        // Standard bottom rectangle
-                        d = "M 5 55 L 95 55 L 95 95 L 5 95 Z";
-                      }
-                      
-                      return (
-                        <path 
-                          d={d} 
-                          fill="rgba(6, 182, 212, 0.1)" 
-                          stroke="rgba(34, 211, 238, 0.5)" 
-                          strokeWidth="0.5" 
-                          strokeDasharray="2,1"
-                          filter="url(#glow)"
-                        />
-                      );
-                    })()}
-                  </svg>
-                </div>
-              )}
+              {/* Removed redundant highlight div since it was moved inside Arena Floor */}
 
               {/* Full Map Highlight for Spells */}
               {selectedCard && (selectedCard === 'Poison Apple' || selectedCard === 'Miner Bomb' || selectedCard === 'Oz Tornado' || selectedCard === "Glinda's Light") && (
@@ -937,6 +982,10 @@ export default function App() {
           0% { transform: translate(-50%, -100%) translateZ(0px) scale(0); opacity: 0; }
           70% { transform: translate(-50%, -100%) translateZ(30px) scale(1.1); opacity: 1; }
           100% { transform: translate(-50%, -100%) translateZ(20px) scale(1); opacity: 1; }
+        }
+        @keyframes pulse {
+          0%, 100% { transform: translate(-50%, -50%) translateZ(5px) scale(1); opacity: 0.8; }
+          50% { transform: translate(-50%, -50%) translateZ(10px) scale(1.05); opacity: 1; }
         }
       `}</style>
     </div>

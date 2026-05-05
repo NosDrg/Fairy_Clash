@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:client": "vite",
+    "dev:server": "npm run dev --prefix server"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -68,6 +70,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
     "@vitejs/plugin-react": "4.7.0",
+    "concurrently": "^9.2.1",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5"
   },

@@ -11,7 +11,7 @@ const DEFAULT_CARDS = [
     { name: 'Huntsman', cost: 4, hp: 900, damage: 180, attackSpeed: 1.5, range: 5, moveSpeed: 3, type: 'Troop' },
     { name: 'Fairy Bluebird', cost: 1, hp: 300, damage: 40, attackSpeed: 0.5, range: 3, moveSpeed: 8, type: 'Troop' },
     { name: 'Dwarf Hut', cost: 5, hp: 1500, damage: 0, attackSpeed: 0, range: 0, spawnRate: 8, type: 'Building' },
-    { name: 'Poison Apple', cost: 4, damage: 300, effect: 'poison', type: 'Spell' },
+    { name: 'Poison Apple', cost: 4, damage: 15, effect: 'poison_area', radius: 12, duration: 15, type: 'Spell' },
     { name: 'Miner Bomb', cost: 2, damage: 50, effect: 'pushback', radius: 15, type: 'Spell' },
     { name: 'The King', cost: 7, hp: 3500, damage: 400, attackSpeed: 2.5, range: 1.5, moveSpeed: 1.5, type: 'Troop', isAoE: true, aoeRadius: 2, targetPreference: 'building' },
     { name: 'Tin Woodman', cost: 6, hp: 3000, damage: 180, attackSpeed: 1.8, range: 1.5, moveSpeed: 2.5, type: 'Troop' },
@@ -50,6 +50,7 @@ class GameRoom {
                 new Building('p2_left', null, towerStats('princess'), 20, 20, 'top'),
                 new Building('p2_right', null, towerStats('princess'), 80, 20, 'top')
             ],
+            activeSpells: [],
             status: 'waiting'
         };
         this.tickRate = 100;
@@ -170,15 +171,23 @@ class GameRoom {
                         }
                     }
                 });
+            } else if (cardStats.effect === 'poison_area') {
+                this.gameState.activeSpells.push({
+                    id: `spell_${Date.now()}`,
+                    name: 'Poison Apple',
+                    x: x,
+                    y: y,
+                    radius: cardStats.radius || 12,
+                    damage: cardStats.damage || 15,
+                    duration: (cardStats.duration || 15) * 1000, // đổi sang ms
+                    startTime: Date.now(),
+                    side: player.side
+                });
             } else {
-                // Toàn bản đồ
+                // Toàn bản đồ (hiệu ứng cũ nếu còn các spell khác)
                 this.gameState.entities.forEach(e => {
                     if (e.side === enemySide) {
                         e.takeDamage(damage);
-                        if (cardStats.effect === 'poison') {
-                            e.applyStun(3000);
-                            e.applySlow(6000);
-                        }
                     }
                 });
                 this.gameState.towers.forEach(t => {
@@ -214,6 +223,25 @@ class GameRoom {
         if (this.gameState.timeLeft > 0) {
             this.gameState.timeLeft -= (this.tickRate / 1000);
             
+            // Cập nhật các spell đang hiệu lực
+            this.gameState.activeSpells = this.gameState.activeSpells.filter(spell => {
+                spell.duration -= this.tickRate;
+                
+                // Gây sát thương mỗi tick cho kẻ địch trong vùng
+                const enemySide = spell.side === 'bottom' ? 'top' : 'bottom';
+                this.gameState.entities.forEach(e => {
+                    if (e.side === enemySide) {
+                        const dist = Math.sqrt(Math.pow(e.x - spell.x, 2) + Math.pow(e.y - spell.y, 2));
+                        if (dist <= spell.radius) {
+                            e.takeDamage(spell.damage);
+                            e.applySlow(1000); // Làm chậm nhẹ khi đi qua vùng độc
+                        }
+                    }
+                });
+                
+                return spell.duration > 0;
+            });
+
             // Cập nhật bụi tiên động (x2 ở 60s cuối)
             const dustIntervalTime = this.gameState.timeLeft <= 60 ? 1 : 2;
             this.dustTimer += (this.tickRate / 1000);
@@ -272,6 +300,7 @@ class GameRoom {
                 players: Object.keys(this.players).map(id => ({
                     id, fairyDust: this.players[id].fairyDust
                 })),
+                activeSpells: this.gameState.activeSpells,
                 attacks: attacks
             });
         } else {
